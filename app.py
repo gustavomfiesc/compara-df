@@ -1,10 +1,14 @@
 import streamlit as st
 import polars as pl
+import pandas as pd
+import numpy as np
 import gc
 
 # ==============================================================================
 # 1. CONFIGURAÇÃO E UTILITÁRIOS
 # ==============================================================================
+
+pd.set_option("styler.render.max_elements", 1000000)
 
 def setup_page():
     """Configurações iniciais da página e CSS."""
@@ -89,11 +93,21 @@ def execute_comparison(df1: pl.DataFrame, df2: pl.DataFrame, sort_keys: list):
     # 3. Normalização
     df1, df2 = normalize_types(df1, df2)
 
-    # 4. Ordenação (Agora seguro, pois já temos o número da linha original gravado)
-    keys = sort_keys if sort_keys else list(cols1)
+    # 4. ORDENAÇÃO (Lógica Solicitada)
+    # Remove as colunas de linha da lista de ordenação
+    cols_para_ordenar = [c for c in df1.columns if c not in ["Linha_Original_A"]]
+    
     try:
-        df1 = df1.sort(keys)
-        df2 = df2.sort(keys)
+        if sort_keys:
+            # Opção A: Usuário definiu chaves -> Ordena por elas (Mais seguro para updates)
+            df1 = df1.sort(sort_keys, maintain_order=True)
+            df2 = df2.sort(sort_keys, maintain_order=True)
+        else:
+            # Opção B: Usuário NÃO definiu chaves -> Ordena por TUDO (Conteúdo)
+            # Isso garante que linhas idênticas fiquem alinhadas mesmo se estiverem em ordem física diferente
+            df1 = df1.sort(cols_para_ordenar, maintain_order=True)
+            df2 = df2.sort(cols_para_ordenar, maintain_order=True)
+            
     except Exception as e:
         return {"status": "error", "msg": f"Erro na ordenação: {str(e)}"}
 
@@ -187,8 +201,42 @@ def render_sidebar_interface():
     return df_a, name_a, df_b, name_b, sort_keys, run_btn
 
 # ==============================================================================
-# 4. INTERFACE PRINCIPAL
+# 4. LÓGICA DE ESTILO E RENDERIZAÇÃO
 # ==============================================================================
+
+def highlight_differences(df_to_style, df_comparison, common_columns):
+    """
+    Função vetorizada para aplicar estilos.
+    Retorna um objeto Styler do Pandas.
+    """
+    def style_logic(data):
+        # 'data' aqui é o DataFrame inteiro sendo estilizado (df_to_style)
+        # Criamos um DataFrame vazio de strings para os estilos
+        styles = pd.DataFrame('', index=data.index, columns=data.columns)
+        
+        # Converte para numpy para performance
+        # Alinha os dados apenas nas colunas comuns (dados de negócio)
+        # Assumimos que os DataFrames estão alinhados pelo índice (resetado antes)
+        
+        # Pega valores das colunas comuns
+        val1 = data[common_columns].fillna("$$NULL$$").astype(str).values
+        val2 = df_comparison[common_columns].fillna("$$NULL$$").astype(str).values
+        
+        # Máscara booleana onde difere
+        mask = val1 != val2
+        
+        # Cor de fundo para erros (vermelho claro)
+        bg_color = 'background-color: #ffcccc; color: #9a0000; font-weight: bold;'
+        
+        # Aplica o estilo no DataFrame de estilos (apenas nas colunas comuns)
+        for idx_col, col_name in enumerate(common_columns):
+            # idx_col mapeia para a coluna no array numpy 'mask'
+            # Mas precisamos mapear de volta para o DataFrame de styles
+            styles.loc[mask[:, idx_col], col_name] = bg_color
+            
+        return styles
+
+    return df_to_style.style.apply(style_logic, axis=None)
 
 def render_previews(df_a, name_a, df_b, name_b):
     """Exibe amostra dos dados."""
@@ -282,13 +330,28 @@ def render_results(result, name_a, name_b):
     st.divider()
     st.subheader("Linhas completas onde estão as divergências")
 
+    # Converte para Pandas APENAS o dataset filtrado (leve para memória)
+    # Reset index para garantir alinhamento perfeito na comparação
+    df_a_pd = result["full_rows_a"].to_pandas()
+    df_b_pd = result["full_rows_b"].to_pandas()
+    
+    # Identifica colunas de dados (exclui índices de linha)
+    common_cols = [c for c in df_a_pd.columns if c not in ["Linha_Original_A", "Linha_Original_B"]]
+
     tab_a, tab_b = st.tabs([f"Linhas do Arquivo A ({name_a})", f"Linhas do Arquivo B ({name_b})"])
     
     with tab_a:
-        st.dataframe(result["full_rows_a"])
-    
+        # Estiliza A comparando com B
+        styler_a = highlight_differences(df_a_pd, df_b_pd, common_cols)
+        # Formata colunas de index para não mostrar vírgula
+        styler_a.format({"Linha_Original_A": "{:.0f}"})
+        st.dataframe(styler_a)
+        
     with tab_b:
-        st.dataframe(result["full_rows_b"])
+        # Estiliza B comparando com A
+        styler_b = highlight_differences(df_b_pd, df_a_pd, common_cols)
+        styler_b.format({"Linha_Original_B": "{:.0f}"})
+        st.dataframe(styler_b)
 
 # ==============================================================================
 # 5. MAIN
