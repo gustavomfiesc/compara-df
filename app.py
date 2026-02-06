@@ -112,7 +112,12 @@ def execute_comparison(df1: pl.DataFrame, df2: pl.DataFrame, sort_keys: list):
         return {"status": "error", "msg": f"Erro na ordenação: {str(e)}"}
 
     if df1.height != df2.height:
-        st.toast(f"⚠️ Tamanhos diferentes ({df1.height} vs {df2.height})", icon="⚠️")
+        st.toast(f"Tamanhos diferentes ({df1.height} vs {df2.height})", icon="⚠️")
+        return {
+            "status": "size_error",
+            "msg": f"As tabelas possuem tamanhos diferentes ({df1.height} vs {df2.height}) e não podem ser comparadas linha a linha.",
+            "details": "Verifique se há linhas duplicadas ou faltantes em um dos arquivos."
+        }
 
     # 5. Detecção
     diff_results = {}
@@ -161,7 +166,8 @@ def execute_comparison(df1: pl.DataFrame, df2: pl.DataFrame, sort_keys: list):
     return {
         "status": "success", "diffs": diff_results, "cols_diff": cols_with_diff,
         "total_rows": df1.height, "rows_with_error": total_rows_with_error,
-        "full_rows_a": full_rows_a, "full_rows_b": full_rows_b
+        "full_rows_a": full_rows_a, "full_rows_b": full_rows_b,
+        "sorted_by": sort_keys if sort_keys else "Todas as colunas (Automático)"
     }
 
 # ==============================================================================
@@ -278,6 +284,11 @@ def render_diff_table(col_name, diff_data, name_a, name_b):
 
 def render_results(result, name_a, name_b):
     """Exibe KPIs, Detalhes Lado a Lado e Linhas Completas."""
+    if result["status"] == "size_error":
+        st.error("🛑 " + result["msg"])
+        st.warning(result["details"])
+        return
+
     if result["status"] == "error":
         st.error(result["msg"])
         if "details" in result: st.code(result["details"])
@@ -311,7 +322,6 @@ def render_results(result, name_a, name_b):
 
     # 1. VISUALIZAÇÃO POR COLUNA (LADO A LADO)
     st.markdown(f"### Diferenças por coluna")
-    st.info("Abaixo estão listados apenas os valores que divergem entre os dois arquivos.")
     
     if len(cols_diff) > 8:
         # Se houver muitas colunas, usa selectbox
