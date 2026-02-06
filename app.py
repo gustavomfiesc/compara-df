@@ -10,8 +10,13 @@ def setup_page():
     """Configurações iniciais da página e CSS."""
     st.set_page_config(
         page_title="Comparador de Planilhas",
-        page_icon="⚖️",
+        page_icon="images/logo-obs.png",
         layout="wide"
+    )
+
+    st.sidebar.image(
+        "images/OBS_Logo.png", 
+        width=250
     )
     
     st.markdown("""
@@ -170,14 +175,14 @@ def render_sidebar_interface():
                 cols = sorted(list(set(df_a.columns).intersection(set(df_b.columns))))
 
                 sort_keys = st.multiselect(
-                    "Chave de Ordenação (ID):", 
+                    "Chave de ordenação (ID):", 
                     options=cols,
                     placeholder="Padrão: Todas as colunas",
                     help="Selecione as colunas que identificam a linha (ex: ID, UF+Setor)."
                 )
                 
-                st.write(""); run_btn = st.button("🚀 Comparar Planilhas", type="primary", use_container_width=True)
-                if st.button("Limpar Cache"): st.cache_data.clear(); gc.collect()
+                st.write(""); run_btn = st.button("Comparar planilhas", type="primary", width='stretch')
+                if st.button("Limpar cache"): st.cache_data.clear(); gc.collect()
         else: st.info("Faça o upload dos arquivos.")
     return df_a, name_a, df_b, name_b, sort_keys, run_btn
 
@@ -187,19 +192,44 @@ def render_sidebar_interface():
 
 def render_previews(df_a, name_a, df_b, name_b):
     """Exibe amostra dos dados."""
-    st.subheader("👀 Prévia dos Arquivos")
+    st.subheader("Prévia dos arquivos")
     c1, c2 = st.columns(2)
     with c1:
-        with st.expander(f"Arquivo A: {name_a}", expanded=True):
-            st.dataframe(df_a.head(5), width='stretch')
-            st.caption(f"{df_a.height} linhas x {df_a.width} colunas")
+        st.dataframe(df_a.head(5), width='stretch')
+        st.caption(f"{df_a.height} linhas x {df_a.width} colunas")
     with c2:
-        with st.expander(f"Arquivo B: {name_b}", expanded=True):
-            st.dataframe(df_b.head(5), width='stretch')
-            st.caption(f"{df_b.height} linhas x {df_b.width} colunas")
+        st.dataframe(df_b.head(5), width='stretch')
+        st.caption(f"{df_b.height} linhas x {df_b.width} colunas")
+
+def render_diff_table(col_name, diff_data, name_a, name_b):
+    """
+    Helper para renderizar a tabela de diferenças lado a lado.
+    Recebe o DataFrame combinado e separa visualmente.
+    """
+    st.caption(f"Exibindo divergências na coluna: **{col_name}** ({len(diff_data)} registros)")
+    
+    col_a, col_b = st.columns(2)
+    
+    with col_a:
+        st.markdown(f"**📄 {name_a}**")
+        # Seleciona apenas as colunas do Arq A
+        df_show_a = diff_data.select([
+            pl.col("Linha_Original_A").alias("Linha"), 
+            pl.col("Valor_Arq_A").alias(f"Valor em {col_name}")
+        ])
+        st.dataframe(df_show_a)
+
+    with col_b:
+        st.markdown(f"**📄 {name_b}**")
+        # Seleciona apenas as colunas do Arq B
+        df_show_b = diff_data.select([
+            pl.col("Linha_Original_B").alias("Linha"), 
+            pl.col("Valor_Arq_B").alias(f"Valor em {col_name}")
+        ])
+        st.dataframe(df_show_b)
 
 def render_results(result, name_a, name_b):
-    """Exibe KPIs, Detalhes e Linhas Completas."""
+    """Exibe KPIs, Detalhes Lado a Lado e Linhas Completas."""
     if result["status"] == "error":
         st.error(result["msg"])
         if "details" in result: st.code(result["details"])
@@ -209,15 +239,14 @@ def render_results(result, name_a, name_b):
     diffs = result["diffs"]
     
     st.divider()
-    st.subheader("📊 Relatório de Comparação")
+    st.subheader("Relatório de comparação")
     
     # KPIs
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Total de Linhas", f"{result['total_rows']:,}".replace(",", "."))
-    k2.metric("Colunas com Divergência", len(cols_diff))
-    
+    k1.metric("Total de linhas", f"{result['total_rows']:,}".replace(",", "."))
+    k2.metric("Colunas com divergência", len(cols_diff))
     rows_err = result['rows_with_error']
-    k3.metric("Linhas com Divergência", f"{rows_err:,}".replace(",", "."))
+    k3.metric("Linhas com divergência", f"{rows_err:,}".replace(",", "."))
 
     with k4:
         if not cols_diff:
@@ -232,33 +261,34 @@ def render_results(result, name_a, name_b):
         st.success("Tudo certo! Arquivos idênticos.")
         return
 
-    # 1. VISUALIZAÇÃO POR COLUNA
-    st.markdown(f"### 🔍 Diferenças por Coluna")
+    # 1. VISUALIZAÇÃO POR COLUNA (LADO A LADO)
+    st.markdown(f"### Diferenças por coluna")
+    st.info("Abaixo estão listados apenas os valores que divergem entre os dois arquivos.")
     
     if len(cols_diff) > 8:
+        # Se houver muitas colunas, usa selectbox
         selected = st.selectbox("Selecione a coluna para detalhar:", cols_diff)
         d = diffs[selected]
-        st.markdown(f"**Coluna:** `{selected}` | **Erros:** {d['count']}")
-        st.dataframe(d["data"], width='stretch', hide_index=True)
+        render_diff_table(selected, d["data"], name_a, name_b)
     else:
+        # Se houver poucas, usa abas
         tabs = st.tabs(cols_diff)
         for tab, col in zip(tabs, cols_diff):
             with tab:
                 d = diffs[col]
-                st.caption(f"Linhas divergentes nesta coluna: {d['count']}")
-                st.dataframe(d["data"], width='stretch', hide_index=True)
+                render_diff_table(col, d["data"], name_a, name_b)
 
     # 2. VISUALIZAÇÃO DE LINHAS COMPLETAS
     st.divider()
-    st.subheader("📋 Linhas Completas com Divergências")
+    st.subheader("Linhas completas onde estão as divergências")
 
     tab_a, tab_b = st.tabs([f"Linhas do Arquivo A ({name_a})", f"Linhas do Arquivo B ({name_b})"])
     
     with tab_a:
-        st.dataframe(result["full_rows_a"], width='stretch', hide_index=True)
+        st.dataframe(result["full_rows_a"])
     
     with tab_b:
-        st.dataframe(result["full_rows_b"], width='stretch', hide_index=True)
+        st.dataframe(result["full_rows_b"])
 
 # ==============================================================================
 # 5. MAIN
@@ -283,7 +313,7 @@ def main():
         ### Como usar:
         1. Utilize a **barra lateral** à esquerda para carregar seus arquivos.
         2. Selecione uma ou mais colunas chave (ID) para garantir a ordenação correta das tabelas. Mantenha vazio para usar todas as colunas. 
-        3. Clique em **Comparar Planilhas**.
+        3. Clique em **Comparar planilhas**.
         """)
 
 if __name__ == "__main__":
